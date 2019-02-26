@@ -4,8 +4,6 @@ import com.wolf.sparkproject.conf.ConfigurationManager;
 
 /**
  * 配置管理组件测试类
- * @author Administrator
- *
  */
 public class ConfigurationManagerTest {
 	public static void main(String[] args) {
