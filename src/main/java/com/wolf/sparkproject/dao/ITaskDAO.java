@@ -8,8 +8,8 @@ import com.wolf.sparkproject.domain.Task;
 public interface ITaskDAO {
     /**
      * 根据主键查询业务
-     * @param taskId 任务id
+     * @param taskid 任务id
      * @return 任务
      */
-    Task findById(long taskId);
+    Task findById(long taskid);
 }

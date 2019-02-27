@@ -14,11 +14,11 @@ public class TaskDAOImpl implements ITaskDAO {
      * 根据主键查询任务
      */
     @Override
-    public Task findById(long taskId) {
+    public Task findById(long taskid) {
         final Task task = new Task();
 
         String sql = "select * from task where task_id=?";
-        Object[] params = new Object[]{taskId};
+        Object[] params = new Object[]{taskid};
 
         JDBCHelper jdbcHelper = JDBCHelper.getInstance();
         jdbcHelper.executeQuery(sql, params, new JDBCHelper.QueryCallback() {
@@ -26,7 +26,7 @@ public class TaskDAOImpl implements ITaskDAO {
             @Override
             public void process(ResultSet rs) throws Exception {
                 if(rs.next()) {
-                    long taskId = rs.getLong(1);
+                    long taskid = rs.getLong(1);
                     String taskName = rs.getString(2);
                     String createTime = rs.getString(3);
                     String startTime = rs.getString(4);
@@ -35,7 +35,7 @@ public class TaskDAOImpl implements ITaskDAO {
                     String taskStatus = rs.getString(7);
                     String taskParam = rs.getString(8);
 
-                    task.setTaskId(taskId);
+                    task.setTaskid(taskid);
                     task.setTaskName(taskName);
                     task.setCreateTime(createTime);
                     task.setStartTime(startTime);

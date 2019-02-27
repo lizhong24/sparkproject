@@ -11,9 +11,11 @@ import org.apache.spark.AccumulatorParam;
  * 各个task分布式在运行，可以根据自己的需求，task给Accumulator传入不同的值
  * 根据不同的值，去做复杂的逻辑
  *
- * Spark Core里很使用的高端技术
+ * Spark Core里很实用的高端技术
  */
 public class SesssionAggrStatAccumulator implements AccumulatorParam<String> {
+
+    private static final long serialVersionUID = -2113961376143864034L;
 
     //zero方法，主要用于数据初始化
     //这里就返回一个值，就是初始化中，所有范围区间的数值都是0
@@ -60,12 +62,12 @@ public class SesssionAggrStatAccumulator implements AccumulatorParam<String> {
     //v2就是在遍历session的时候，判断出某个session对应的区间，然后用Constants.TIME_PERIOD_1S_3S
     //所以，我们要做的事情就是在v1中，找到对应的v2对应的value，累加1，然后再更新到连接串里面去
     @Override
-    public String addAccumulator(String v1, String v2) {
+    public String addInPlace(String v1, String v2) {
         return null;
     }
 
     @Override
-    public String addInPlace(String v1, String v2) {
+    public String addAccumulator(String v1, String v2) {
         return null;
     }
 

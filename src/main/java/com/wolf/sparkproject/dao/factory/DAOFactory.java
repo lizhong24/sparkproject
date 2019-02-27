@@ -1,6 +1,8 @@
 package com.wolf.sparkproject.dao.factory;
 
+import com.wolf.sparkproject.dao.ISessionAggrStatDAO;
 import com.wolf.sparkproject.dao.ITaskDAO;
+import com.wolf.sparkproject.impl.SessionAggrStatDAOImpl;
 import com.wolf.sparkproject.impl.TaskDAOImpl;
 
 /**
@@ -12,5 +14,13 @@ public class DAOFactory {
      */
     public static ITaskDAO getTaskDAO(){
         return new TaskDAOImpl();
+    }
+
+    /**
+     * 获取session聚合统计DAO
+     * @return ISessionAggrStatDAO
+     */
+    public static ISessionAggrStatDAO getSessionAggrStatDAO() {
+        return new SessionAggrStatDAOImpl();
     }
 }

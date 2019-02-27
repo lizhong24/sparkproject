@@ -8,7 +8,7 @@ import java.io.Serializable;
 public class Task implements Serializable {
     private static final long serialVersionUID = -9205169808581154064L;
 
-    private long taskId;
+    private long taskid;
     private String taskName;
     private String createTime;
     private String startTime;
@@ -17,11 +17,11 @@ public class Task implements Serializable {
     private String taskStatus;
     private String taskParam;
 
-    public long getTaskId() {
-        return taskId;
+    public long getTaskid() {
+        return taskid;
     }
-    public void setTaskId(long taskId) {
-        this.taskId = taskId;
+    public void setTaskid(long taskid) {
+        this.taskid = taskid;
     }
     public String getTaskName() {
         return taskName;
