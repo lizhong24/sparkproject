@@ -7,6 +7,7 @@ import com.wolf.sparkproject.dao.ITaskDAO;
 import com.wolf.sparkproject.dao.factory.DAOFactory;
 import com.wolf.sparkproject.domain.Task;
 import com.wolf.sparkproject.test.MockData;
+import com.wolf.sparkproject.util.DateUtils;
 import com.wolf.sparkproject.util.ParamUtils;
 import com.wolf.sparkproject.util.StringUtils;
 import com.wolf.sparkproject.util.ValidUtils;
@@ -23,6 +24,7 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
 import scala.Tuple2;
 
+import java.util.Date;
 import java.util.Iterator;
 
 /**
@@ -46,7 +48,7 @@ import java.util.Iterator;
  * spark-submit shell脚本，在执行时，是可以接收参数的，并且会将接收的参数传递给spark作业的main函数
  * 参数就封装在main函数得到args数组中
  *
- * 这是spark本事提供的特性
+ * 这是spark本身提供的特性
  */
 public class UserVisitSessionAnalyzeSpark {
     public static void main(String[] args) {
@@ -206,72 +208,117 @@ public class UserVisitSessionAnalyzeSpark {
                 @Override
                 public Tuple2<Long, String> call(Tuple2<String, Iterable<Row>> tuple)
                         throws Exception {
-                String sessionid = tuple._1;
-                Iterator<Row> iterator = tuple._2.iterator();
+                    String sessionid = tuple._1;
+                    Iterator<Row> iterator = tuple._2.iterator();
 
-                StringBuffer searchKeywordsBuffer = new StringBuffer("");
-                StringBuffer clickCategoryIdsBuffer = new StringBuffer("");
+                    StringBuffer searchKeywordsBuffer = new StringBuffer("");
+                    StringBuffer clickCategoryIdsBuffer = new StringBuffer("");
 
-                Long userid = null;
+                    Long userid = null;
 
-                //遍历session所有的访问行为
-                while(iterator.hasNext()) {
-                    //提取每个 访问行为的搜索词字段和点击品类字段
-                    Row row = iterator.next();
-                    if(userid == null) {
-                        userid = row.getLong(1);
-                    }
-                    String searchKeyword = row.getString(5);
-                    long clickCategoryId = row.getLong(6);
+                    //session的起始和结束时间
+                    Date startTime = null;
+                    Date endTime = null;
+                    //session的访问步长
+                    int stepLength = 0;
 
-                    //实际上这里要对数据说明一下
-                    //并不是每一行访问行为都有searchKeyword和clickCategoryId两个字段的
-                    //其实，只有搜索行为是有searchKeyword字段的
-                    //只有点击品类的行为是有clickCaregoryId字段的
-                    //所以，任何一行行为数据，都不可能两个字段都有，所以数据是可能出现null值的
-
-                    //所以是否将搜索词点击品类id拼接到字符串中去
-                    //首先要满足不能是null值
-                    //其次，之前的字符串中还没有搜索词或者点击品类id
-
-                    if(StringUtils.isNotEmpty(searchKeyword)) {
-                        if(!searchKeywordsBuffer.toString().contains(searchKeyword)) {
-                            searchKeywordsBuffer.append(searchKeyword + ",");
+                    //遍历session所有的访问行为
+                    while(iterator.hasNext()) {
+                        //提取每个 访问行为的搜索词字段和点击品类字段
+                        Row row = iterator.next();
+                        if(userid == null) {
+                            userid = row.getLong(1);
                         }
+                        String searchKeyword = row.getString(5);
+                        Long clickCategoryId = row.getLong(6);
+
+                        //实际上这里要对数据说明一下
+                        //并不是每一行访问行为都有searchKeyword和clickCategoryId两个字段的
+                        //其实，只有搜索行为是有searchKeyword字段的
+                        //只有点击品类的行为是有clickCaregoryId字段的
+                        //所以，任何一行行为数据，都不可能两个字段都有，所以数据是可能出现null值的
+
+                        //所以是否将搜索词点击品类id拼接到字符串中去
+                        //首先要满足不能是null值
+                        //其次，之前的字符串中还没有搜索词或者点击品类id
+
+                        if(StringUtils.isNotEmpty(searchKeyword)) {
+                            if(!searchKeywordsBuffer.toString().contains(searchKeyword)) {
+                                searchKeywordsBuffer.append(searchKeyword + ",");
+                            }
+                        }
+                        if(clickCategoryId != null) {
+                            if(!clickCategoryIdsBuffer.toString().contains(
+                                    String.valueOf(clickCategoryId))) {
+                                clickCategoryIdsBuffer.append(clickCategoryId + ",");
+                            }
+                        }
+
+                        //计算session开始和结束时间
+                        //现在DateUtils.java中添加方法
+                        //public static Date parseTime(String time) {
+                        //  try {
+                        //      return TIME_FORMAT.parse(time);
+                        //  } catch (ParseException e) {
+                        //      e.printStackTrace();
+                        //  }
+                        //  return null;
+                        //}
+
+                        //计算session开始和结束时间
+                        Date actionTime = DateUtils.parseTime(row.getString(4));
+                        if(startTime == null) {
+                            startTime = actionTime;
+                        }
+                        if(endTime == null) {
+                            endTime = actionTime;
+                        }
+
+                        if(actionTime.before(startTime)) {
+                            startTime = actionTime;
+                        }
+                        if(actionTime.after(endTime)) {
+                            endTime = actionTime;
+                        }
+
+                        //计算session访问步长
+                        stepLength ++;
                     }
-                    if(!clickCategoryIdsBuffer.toString().contains(
-                            String.valueOf(clickCategoryId))) {
-                        clickCategoryIdsBuffer.append(clickCategoryId + ",");
-                    }
-                }
 
-                //StringUtils引入的包是import com.wolf.sparkproject.util.trimComma;
-                String searchKeywords = StringUtils.trimComma(searchKeywordsBuffer.toString());
-                String clickCategoryIds = StringUtils.trimComma(clickCategoryIdsBuffer.toString());
+                    //StringUtils引入的包是import com.wolf.sparkproject.util.trimComma;
+                    String searchKeywords = StringUtils.trimComma(searchKeywordsBuffer.toString());
+                    String clickCategoryIds = StringUtils.trimComma(clickCategoryIdsBuffer.toString());
 
-                //返回的数据即是<sessionid, partAggrInfo>
-                //但是，这一步聚合后，其实还需要将每一行数据，根对应的用户信息进行聚合
-                //问题来了，如果是跟用户信息进行聚合的话，那么key就不应该是sessionid，而应该是userid
-                //才能够跟<userid, Row>格式的用户信息进行聚合
-                //如果我们这里直接返回<sessionid, partAggrInfo>,还得再做一次mapToPair算子
-                //将RDD映射成<userid,partAggrInfo>的格式，那么就多此一举
+                    //计算session访问时长（秒）
+                    long visitLength = (endTime.getTime() - startTime.getTime()) / 1000;
 
-                //所以，我们这里其实可以直接返回数据格式就是<userid, partAggrInfo>
-                //然后在直接将返回的Tuple的key设置成sessionid
-                //最后的数据格式，还是<sessionid,fullAggrInfo>
+                    //返回的数据即是<sessionid, partAggrInfo>
+                    //但是，这一步聚合后，其实还需要将每一行数据，根对应的用户信息进行聚合
+                    //问题来了，如果是跟用户信息进行聚合的话，那么key就不应该是sessionid，而应该是userid
+                    //才能够跟<userid, Row>格式的用户信息进行聚合
+                    //如果我们这里直接返回<sessionid, partAggrInfo>,还得再做一次mapToPair算子
+                    //将RDD映射成<userid,partAggrInfo>的格式，那么就多此一举
 
-                //聚合数据，用什么样的格式进行拼接？
-                //我们这里统一定义，使用key=value|key=value
+                    //所以，我们这里其实可以直接返回数据格式就是<userid, partAggrInfo>
+                    //然后在直接将返回的Tuple的key设置成sessionid
+                    //最后的数据格式，还是<sessionid,fullAggrInfo>
 
-                //在Constants.java中定义spark作业相关的常量
-                //String FIELD_SESSION_ID = "sessionid";
-                //String FIELD_SEARCH_KEYWORDS = "searchKeywords";
-                //String FIELD_CLICK_CATEGORY_IDS = "clickCategoryIds";
-                String partAggrInfo = Constants.FIELD_SESSION_ID + "=" + sessionid + "|"
-                        + Constants.FIELD_SEARCH_KEYWORDS + "=" + searchKeywords + "|"
-                        + Constants.FIELD_CLICK_CATEGORY_IDS + "=" + clickCategoryIds;
+                    //聚合数据，用什么样的格式进行拼接？
+                    //我们这里统一定义，使用key=value|key=value
 
-                return new Tuple2<Long, String>(userid, partAggrInfo);
+                    //在Constants.java中定义spark作业相关的常量
+                    //String FIELD_SESSION_ID = "sessionid";
+                    //String FIELD_SEARCH_KEYWORDS = "searchKeywords";
+                    //String FIELD_CLICK_CATEGORY_IDS = "clickCategoryIds";
+                    //String FIELD_VISIT_LENGTH = "visitLength";
+                    //String FIELD_STEP_LENGTH = "stepLength";
+                    String partAggrInfo = Constants.FIELD_SESSION_ID + "=" + sessionid + "|"
+                            + Constants.FIELD_SEARCH_KEYWORDS + "=" + searchKeywords + "|"
+                            + Constants.FIELD_CLICK_CATEGORY_IDS + "=" + clickCategoryIds + "|"
+                            + Constants.FIELD_VISIT_LENGTH + "=" + visitLength + "|"
+                            + Constants.FIELD_STEP_LENGTH + "=" + stepLength;
+
+                    return new Tuple2<Long, String>(userid, partAggrInfo);
                 }
             });
 
@@ -303,28 +350,28 @@ public class UserVisitSessionAnalyzeSpark {
                 @Override
                 public Tuple2<String, String> call(
                         Tuple2<Long, Tuple2<String, Row>> tuple) throws Exception {
-                String partAggrInfo = tuple._2._1;
-                Row userInfoRow = tuple._2._2;
+                    String partAggrInfo = tuple._2._1;
+                    Row userInfoRow = tuple._2._2;
 
-                String sessionid = StringUtils.getFieldFromConcatString(
-                        partAggrInfo, "\\|", Constants.FIELD_SESSION_ID);
+                    String sessionid = StringUtils.getFieldFromConcatString(
+                            partAggrInfo, "\\|", Constants.FIELD_SESSION_ID);
 
-                int age = userInfoRow.getInt(3);
-                String professional = userInfoRow.getString(4);
-                String city = userInfoRow.getString(5);
-                String sex = userInfoRow.getString(6);
+                    int age = userInfoRow.getInt(3);
+                    String professional = userInfoRow.getString(4);
+                    String city = userInfoRow.getString(5);
+                    String sex = userInfoRow.getString(6);
 
-                //在Constants.java中添加以下常量
-                //String FIELD_AGE = "age";
-                //String FIELD_PROFESSIONAL = "professional";
-                //String FIELD_CITY = "city";
-                //String FIELD_SEX = "sex";
-                String fullAggrInfo = partAggrInfo + "|"
-                        + Constants.FIELD_AGE + "=" + age + "|"
-                        + Constants.FIELD_PROFESSIONAL + "=" + professional + "|"
-                        + Constants.FIELD_CITY + "=" + city + "|"
-                        + Constants.FIELD_SEX + "=" + sex ;
-                return new Tuple2<String, String>(sessionid, fullAggrInfo);
+                    //在Constants.java中添加以下常量
+                    //String FIELD_AGE = "age";
+                    //String FIELD_PROFESSIONAL = "professional";
+                    //String FIELD_CITY = "city";
+                    //String FIELD_SEX = "sex";
+                    String fullAggrInfo = partAggrInfo + "|"
+                            + Constants.FIELD_AGE + "=" + age + "|"
+                            + Constants.FIELD_PROFESSIONAL + "=" + professional + "|"
+                            + Constants.FIELD_CITY + "=" + city + "|"
+                            + Constants.FIELD_SEX + "=" + sex ;
+                    return new Tuple2<String, String>(sessionid, fullAggrInfo);
                 }
             });
         return sessionid2FullAggrInfoRDD;

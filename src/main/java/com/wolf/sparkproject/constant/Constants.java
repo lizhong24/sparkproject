@@ -25,6 +25,14 @@ public interface Constants {
     String FIELD_PROFESSIONAL = "professional";
     String FIELD_CITY = "city";
     String FIELD_SEX = "sex";
+    String FIELD_VISIT_LENGTH = "visitLength";
+    String FIELD_STEP_LENGTH = "stepLength";
+    String FIELD_START_TIME = "starttime";
+
+    String FIELD_CATEGORY_ID = "categoryid";
+    String FIELD_CLICK_COUNT = "clickCount";
+    String FIELD_ORDER_COUNT = "orderCount";
+    String FIELD_PAY_COUNT = "payCount";
 
     String SESSION_COUNT = "session_count";
     String TIME_PERIOD_1s_3s = "1s_3s";
