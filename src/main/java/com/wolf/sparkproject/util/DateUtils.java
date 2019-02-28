@@ -73,13 +73,13 @@ public class DateUtils {
 	 * @param datetime 时间（yyyy-MM-dd HH:mm:ss）
 	 * @return 结果
 	 */
-	public static String getDateHour(String datetime){
+	public static String getDateHour(String datetime) {
 		String date = datetime.split(" ")[0];
 		String hourMinuteSecond = datetime.split(" ")[1];
 		String hour = hourMinuteSecond.split(":")[0];
 		return date + "_" + hour;
 	}
-	
+
 	/**
 	 * 获取当天日期（yyyy-MM-dd）
 	 * @return 当天日期

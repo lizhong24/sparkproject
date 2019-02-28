@@ -4,10 +4,12 @@ import com.alibaba.fastjson.JSONObject;
 import com.wolf.sparkproject.conf.ConfigurationManager;
 import com.wolf.sparkproject.constant.Constants;
 import com.wolf.sparkproject.dao.ISessionAggrStatDAO;
+import com.wolf.sparkproject.dao.ISessionDetailDAO;
 import com.wolf.sparkproject.dao.ISessionRandomExtractDAO;
 import com.wolf.sparkproject.dao.ITaskDAO;
 import com.wolf.sparkproject.dao.factory.DAOFactory;
 import com.wolf.sparkproject.domain.SessionAggrStat;
+import com.wolf.sparkproject.domain.SessionDetail;
 import com.wolf.sparkproject.domain.SessionRandomExtract;
 import com.wolf.sparkproject.domain.Task;
 import com.wolf.sparkproject.test.MockData;
@@ -21,6 +23,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.Function;
 import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.api.java.function.PairFunction;
+import org.apache.spark.api.java.function.VoidFunction;
 import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
@@ -83,6 +86,7 @@ public class UserVisitSessionAnalyzeSpark {
         //如果要进行session粒度的数据聚合，
         //首先要从user_visit_action表中，查询出来指定日期范围内的数据
         JavaRDD<Row> actionRDD = getActionRDDByDateRange(sqlContext, taskParam);
+        JavaPairRDD<String, Row> sessionid2actionRDD = getSessionid2ActionRDD(actionRDD);
 
         //聚合
         //首先，可以将行为数据按照session_id进行groupByKey分组
@@ -105,7 +109,7 @@ public class UserVisitSessionAnalyzeSpark {
 
         System.out.println(filteredSessionid2AggrInfoRDD.count());
 
-        randomExtractSession(task.getTaskid(),filteredSessionid2AggrInfoRDD);
+        randomExtractSession(task.getTaskid(),filteredSessionid2AggrInfoRDD, sessionid2actionRDD);
 
         //计算出各个范围的session占比，并写入MySQL
         calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
@@ -186,6 +190,22 @@ public class UserVisitSessionAnalyzeSpark {
     }
 
     /**
+     * 获取sessionid2到访问行为数据的映射的RDD
+     * @param actionRDD 行为数据RDD
+     * @return ssionid2到访问行为数据的映射的RDD
+     */
+    private static JavaPairRDD<String, Row> getSessionid2ActionRDD(JavaRDD<Row> actionRDD) {
+        return actionRDD.mapToPair(new PairFunction<Row, String, Row>(){
+
+            private static final long serialVersionUID = 1L;
+
+            public Tuple2<String, Row> call(Row row) throws Exception {
+                return new Tuple2<String, Row>(row.getString(2), row);
+            }
+        });
+    }
+
+    /**
      * 对行为数据按sesssion粒度进行聚合
      * @param actionRDD 行为数据RDD
      * @return session粒度聚合数据
@@ -205,9 +225,9 @@ public class UserVisitSessionAnalyzeSpark {
 
                 @Override
                 public Tuple2<String, Row> call(Row row) throws Exception {
-                //按照MockData.java中字段顺序获取
-                //此时需要拿到session_id，序号是2
-                return new Tuple2<String, Row>(row.getString(2), row);
+                    //按照MockData.java中字段顺序获取
+                    //此时需要拿到session_id，序号是2
+                    return new Tuple2<String, Row>(row.getString(2), row);
                 }
             });
 
@@ -328,12 +348,13 @@ public class UserVisitSessionAnalyzeSpark {
                     //String FIELD_CLICK_CATEGORY_IDS = "clickCategoryIds";
                     //String FIELD_VISIT_LENGTH = "visitLength";
                     //String FIELD_STEP_LENGTH = "stepLength";
+                    //String FIELD_START_TIME = "starttime";
                     String partAggrInfo = Constants.FIELD_SESSION_ID + "=" + sessionid + "|"
                             + Constants.FIELD_SEARCH_KEYWORDS + "=" + searchKeywords + "|"
                             + Constants.FIELD_CLICK_CATEGORY_IDS + "=" + clickCategoryIds + "|"
                             + Constants.FIELD_VISIT_LENGTH + "=" + visitLength + "|"
                             + Constants.FIELD_STEP_LENGTH + "=" + stepLength + "|"
-                            + Constants.FIELD_START_TIME + "=" + DateUtils.formatDate(startTime);
+                            + Constants.FIELD_START_TIME + "=" + DateUtils.formatTime(startTime);
 
                     return new Tuple2<Long, String>(userid, partAggrInfo);
                 }
@@ -404,7 +425,7 @@ public class UserVisitSessionAnalyzeSpark {
             final JSONObject taskParam,
             final Accumulator<String> sessionAggrAccumulator) {
         //为了使用后面的ValieUtils,所以，首先将所有的筛选参数拼接成一个连接串
-        String startAge = ParamUtils.getParam(taskParam, Constants.PARAM_END_AGE);
+        String startAge = ParamUtils.getParam(taskParam, Constants.PARAM_START_AGE);
         String endAge = ParamUtils.getParam(taskParam, Constants.PARAM_END_AGE);
         String professionals = ParamUtils.getParam(taskParam, Constants.PARAM_PROFESSIONALS);
         String cities = ParamUtils.getParam(taskParam, Constants.PARAM_CITIES);
@@ -555,27 +576,36 @@ public class UserVisitSessionAnalyzeSpark {
      */
     private static void randomExtractSession(
             final long taskid,
-            JavaPairRDD<String, String> sessionid2AggrInfoRDD) {
-        //第一步，计算每天每小时的session数量，获取<yyyy-mm-dd_hh,session>格式的RDD
+            JavaPairRDD<String, String> sessionid2AggrInfoRDD,
+            JavaPairRDD<String, Row> sessionid2actionRDD) {
+
+        /**
+         * 第一步，计算每天每小时的session数量，
+         */
+
+        //获取<yyyy-mm-dd_hh,session>格式的RDD
         JavaPairRDD<String, String> time2sessionidRDD = sessionid2AggrInfoRDD.mapToPair(
-                new PairFunction<Tuple2<String, String>, String, String>(){
+            new PairFunction<Tuple2<String, String>, String, String>(){
 
-                    private static final long serialVersionUID = 1L;
+                private static final long serialVersionUID = 1L;
 
-                    public Tuple2<String, String> call(
-                            Tuple2<String, String> tuple) throws Exception {
-                        String aggrInfo = tuple._2;
-                        String startTime = StringUtils.getFieldFromConcatString(
-                                aggrInfo, "\\|", Constants.FIELD_START_TIME);
-                        String dateHour = DateUtils.getDateHour(startTime);
-                        return new Tuple2<String, String>(dateHour, aggrInfo);
-                    }
-                });
+                public Tuple2<String, String> call(
+                        Tuple2<String, String> tuple) throws Exception {
+                    String aggrInfo = tuple._2;
+                    String startTime = StringUtils.getFieldFromConcatString(
+                            aggrInfo, "\\|", Constants.FIELD_START_TIME);
+                    String dateHour = DateUtils.getDateHour(startTime);
+                    return new Tuple2<String, String>(dateHour, aggrInfo);
+                }
+            });
 
         //得到每天每小时的session数量
         Map<String, Object> countMap = time2sessionidRDD.countByKey();
 
-        //第二步，使用按时间比例随机抽取算法，计算出每小时要抽取session的索引
+        /**
+         * 第二步，使用按时间比例随机抽取算法，计算出每小时要抽取session的索引
+         */
+
         //将<yyyy-mm-dd_hh,count>格式的map转换成<yyyy-mm-dd,<hh,count>>的格式，方便后面使用
         Map<String, Map<String, Long>> dateHourCountMap =
                 new HashMap<String, Map<String, Long>>();
@@ -716,9 +746,10 @@ public class UserVisitSessionAnalyzeSpark {
                                 //final long taskid,
                                 //JavaPairRDD<String, String> sessionid2AggrInfoRDD)
                                 sessionRandomExtract.setTaskid(taskid);
-                                sessionRandomExtract.setSessionid(sessionid);
                                 sessionRandomExtract.setSessionid(StringUtils.getFieldFromConcatString(
                                         sessionAggrInfo, "\\|", Constants.FIELD_SESSION_ID));
+                                sessionRandomExtract.setStartTime(StringUtils.getFieldFromConcatString(
+                                        sessionAggrInfo, "\\|", Constants.FIELD_START_TIME));
                                 sessionRandomExtract.setSearchKeywords(StringUtils.getFieldFromConcatString(
                                         sessionAggrInfo, "\\|", Constants.FIELD_SEARCH_KEYWORDS));
                                 sessionRandomExtract.setClickCategoryIds(StringUtils.getFieldFromConcatString(
@@ -734,6 +765,45 @@ public class UserVisitSessionAnalyzeSpark {
                         return extractSessionids;
                     }
                 });
+
+        /**
+         * 第四步：获取抽取出来的session的明细数据
+         */
+        JavaPairRDD<String, Tuple2<String, Row>> extractSessionDetailRDD =
+                extractSessionidsRDD.join(sessionid2actionRDD);
+        extractSessionDetailRDD.foreach(new VoidFunction<Tuple2<String, Tuple2<String, Row>>>() {
+
+            private static final long serialVersionUID = 1L;
+
+            public void call(Tuple2<String, Tuple2<String, Row>> tuple) throws Exception {
+                //在包com.wolf.sparkproject.domain中新建SessionDetail.java
+                //在包com.wolf.sparkproject.dao中新建ISessionDetailDAO.java接口
+                //在包com.wolf.sparkproject.impl中新建SessionDetailDAOImpl.java
+                //在DAOFactory.java中添加
+                //public static ISessionDetailDAO getSessionDetailDAO() {
+                //return new SessionDetailDAOImpl();
+                //}
+                Row row = tuple._2._2;
+
+                //封装sessionDetail的domain
+                SessionDetail sessionDetail = new SessionDetail();
+                sessionDetail.setTaskid(taskid);
+                sessionDetail.setUserid(row.getLong(1));
+                sessionDetail.setSessionid(row.getString(2));
+                sessionDetail.setPageid(row.getLong(3));
+                sessionDetail.setActionTime(row.getString(4));
+                sessionDetail.setSearchKeyword(row.getString(5));
+                sessionDetail.setClickCategoryId(row.getLong(6));
+                sessionDetail.setClickProductId(row.getLong(7));
+                sessionDetail.setOrderCategoryIds(row.getString(8));
+                sessionDetail.setOrderProductIds(row.getString(9));
+                sessionDetail.setPayCategoryIds(row.getString(10));
+                sessionDetail.setPayProductIds(row.getString(11));
+
+                ISessionDetailDAO sessionDetailDAO = DAOFactory.getSessionDetailDAO();
+                sessionDetailDAO.insert(sessionDetail);
+            }
+        });
     }
 
     /**

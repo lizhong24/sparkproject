@@ -58,7 +58,7 @@ CREATE TABLE `session_random_extract` (
   `search_keywords` varchar(255) DEFAULT NULL,
   `click_category_ids` varchar(255) DEFAULT NULL,
   KEY `idx_task_id` (`task_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=tis620
+) ENGINE=InnoDB DEFAULT CHARSET=utf8
 
 # 创建session_detail表
 CREATE TABLE `session_detail` (
