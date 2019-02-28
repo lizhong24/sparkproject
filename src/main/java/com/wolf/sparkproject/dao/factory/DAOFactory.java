@@ -46,4 +46,12 @@ public class DAOFactory {
     public static ITop10CategoryDAO getTop10CategoryDAO() {
         return new Top10CategoryDAOImpl();
     }
+
+    /**
+     * top10活跃session的DAO
+     * @return ITop10SessionDAO
+     */
+    public static ITop10SessionDAO getTop10SessionDAO() {
+        return new Top10SessionDAOImpl();
+    }
 }

@@ -88,3 +88,12 @@ CREATE TABLE `top10_category` (
   KEY `idx_task_id` (`task_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8
 
+# 创建top10_session表
+CREATE TABLE `top10_session` (
+  `task_id` int(11) DEFAULT NULL,
+  `category_id` int(11) DEFAULT NULL,
+  `session_id` varchar(255) DEFAULT NULL,
+  `click_count` int(11) DEFAULT NULL,
+  KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8
+

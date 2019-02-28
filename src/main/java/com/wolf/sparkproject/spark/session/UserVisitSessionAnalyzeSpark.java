@@ -1411,5 +1411,111 @@ public class UserVisitSessionAnalyzeSpark {
                                 return new Tuple2<Long, String>(tuple._1, tuple._2._2);
                             }
                         });
+
+        /**
+         * 第三步：分组取topN算法实现，获取每个品类的top10活跃用户
+         */
+        JavaPairRDD<Long, Iterable<String>> top10CategorySessionCountsRDD =
+                top10CategorySessionCountRDD.groupByKey();
+
+        JavaPairRDD<String, String> top10SessionRDD = top10CategorySessionCountsRDD.flatMapToPair(
+                new PairFlatMapFunction<Tuple2<Long, Iterable<String>>, String, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Iterable<Tuple2<String, String>> call(
+                            Tuple2<Long, Iterable<String>> tuple) throws Exception {
+
+                        long categoryid = tuple._1;
+                        Iterator<String> iterator = tuple._2.iterator();
+
+                        //定义取TopN的排序数组
+                        String[] top10Sessions = new String[10];
+
+                        while(iterator.hasNext()) {
+                            String sessionCount = iterator.next();
+                            long count = Long.valueOf(sessionCount.split(",")[1]);
+
+                            //遍历排序数组
+                            for(int i = 0; i < top10Sessions.length; i++) {
+                                //如果当前位没有数据，直接将i位数据赋值为当前sessioncount
+                                if(top10Sessions[i] == null) {
+                                    top10Sessions[i] = sessionCount;
+                                    break;
+                                }else {
+                                    long _count = Long.valueOf(top10Sessions[i].split(",")[1]);
+
+                                    //如果sessionCount比i位的sessionCount大
+                                    if(count > _count) {
+                                        //从排序数组最后一位开始，到i位所有数据往后挪一位
+                                        for(int j = 9; j > i; j--) {
+                                            top10Sessions[j] = top10Sessions[j - 1];
+                                        }
+                                        //将i位赋值为sessionCount
+                                        top10Sessions[i] = sessionCount;
+                                        break;
+                                    }
+
+                                    //如果sessionCount比i位的sessionCount要小，继续外层for循环
+                                }
+                            }
+                        }
+
+                        //将数据写入MySQL表
+                        List<Tuple2<String, String>> list = new ArrayList<Tuple2<String, String>>();
+
+                        for(String sessionCount : top10Sessions) {
+                            if(sessionCount != null) {
+                                String sessionid = sessionCount.split(",")[0];
+                                long count = Long.valueOf(sessionCount.split(",")[1]);
+
+                                //将top10session插入MySQL表
+                                Top10Session top10Session = new Top10Session();
+                                top10Session.setTaskid(taskid);
+                                top10Session.setCategoryid(categoryid);
+                                top10Session.setSessionid(sessionid);
+                                top10Session.setClickCount(count);
+
+                                ITop10SessionDAO top10SessionDAO = DAOFactory.getTop10SessionDAO();
+                                top10SessionDAO.insert(top10Session);
+
+                                list.add(new Tuple2<String, String>(sessionid, sessionid));
+                            }
+                        }
+
+                        return list;
+                    }
+                });
+
+        /**
+         * 第四步：获取top10活跃session的明细数据，并写入MySQL
+         */
+        JavaPairRDD<String, Tuple2<String, Row>> sessionDetailRDD =
+                top10SessionRDD.join(sessionid2detailRDD);
+        sessionDetailRDD.foreach(new VoidFunction<Tuple2<String,Tuple2<String,Row>>>() {
+
+            private static final long serialVersionUID = 1L;
+
+            public void call(Tuple2<String, Tuple2<String, Row>> tuple) throws Exception {
+                Row row = tuple._2._2;
+
+                SessionDetail sessionDetail = new SessionDetail();
+                sessionDetail.setTaskid(taskid);
+                sessionDetail.setUserid(row.getLong(1));
+                sessionDetail.setSessionid(row.getString(2));
+                sessionDetail.setPageid(row.getLong(3));
+                sessionDetail.setActionTime(row.getString(4));
+                sessionDetail.setSearchKeyword(row.getString(5));
+                sessionDetail.setClickCategoryId(row.getLong(6));
+                sessionDetail.setClickProductId(row.getLong(7));
+                sessionDetail.setOrderCategoryIds(row.getString(8));
+                sessionDetail.setOrderProductIds(row.getString(9));
+                sessionDetail.setPayCategoryIds(row.getString(10));
+                sessionDetail.setPayProductIds(row.getString(11));
+
+                ISessionDetailDAO sessionDetailDAO = DAOFactory.getSessionDetailDAO();
+                sessionDetailDAO.insert(sessionDetail);
+            }
+        });
     }
 }
