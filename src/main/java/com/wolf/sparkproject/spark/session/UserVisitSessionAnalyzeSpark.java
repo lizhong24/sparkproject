@@ -1029,6 +1029,38 @@ public class UserVisitSessionAnalyzeSpark {
                 categoryidRDD, clickCategoryId2CountRDD, orderCategoryId2CountRDD,
                 payCategoryId2CountRDD);
 
+        /**
+         * 第四步：自定义二次排序key
+         * 在com.wolf.sparkproject.spark.session包下创建CategorySortKey类
+         */
+
+        /**
+         * 第五步：将数据映射成<SortKey,info>格式的RDD，然后进行二次排序（降序）
+         */
+        JavaPairRDD<CategorySortKey, String> sortKey2countRDD = categoryid2countRDD.mapToPair(
+                new PairFunction<Tuple2<Long, String>, CategorySortKey, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Tuple2<CategorySortKey, String> call(
+                            Tuple2<Long, String> tuple) throws Exception {
+                        String countInfo = tuple._2;
+                        long clickCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                                countInfo, "\\|", Constants.FIELD_CLICK_COUNT));
+                        long orderCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                                countInfo, "\\|", Constants.FIELD_ORDER_COUNT));
+                        long payCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                                countInfo, "\\|", Constants.FIELD_PAY_COUNT));
+
+                        CategorySortKey sortKey = new CategorySortKey(clickCount,
+                                orderCount, payCount);
+                        return new Tuple2<CategorySortKey, String>(sortKey, countInfo);
+                    }
+                });
+
+        JavaPairRDD<CategorySortKey, String> sortedCategoryCountRDD =
+                sortKey2countRDD.sortByKey(false);
+
         List<Tuple2<CategorySortKey, String>> top10CategoryList = null;
         return top10CategoryList;
     }
