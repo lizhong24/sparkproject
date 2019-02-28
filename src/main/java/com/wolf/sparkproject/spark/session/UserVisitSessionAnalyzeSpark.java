@@ -3,15 +3,9 @@ package com.wolf.sparkproject.spark.session;
 import com.alibaba.fastjson.JSONObject;
 import com.wolf.sparkproject.conf.ConfigurationManager;
 import com.wolf.sparkproject.constant.Constants;
-import com.wolf.sparkproject.dao.ISessionAggrStatDAO;
-import com.wolf.sparkproject.dao.ISessionDetailDAO;
-import com.wolf.sparkproject.dao.ISessionRandomExtractDAO;
-import com.wolf.sparkproject.dao.ITaskDAO;
+import com.wolf.sparkproject.dao.*;
 import com.wolf.sparkproject.dao.factory.DAOFactory;
-import com.wolf.sparkproject.domain.SessionAggrStat;
-import com.wolf.sparkproject.domain.SessionDetail;
-import com.wolf.sparkproject.domain.SessionRandomExtract;
-import com.wolf.sparkproject.domain.Task;
+import com.wolf.sparkproject.domain.*;
 import com.wolf.sparkproject.test.MockData;
 import com.wolf.sparkproject.util.*;
 import org.apache.spark.Accumulator;
@@ -112,7 +106,7 @@ public class UserVisitSessionAnalyzeSpark {
         randomExtractSession(task.getTaskid(),filteredSessionid2AggrInfoRDD, sessionid2actionRDD);
 
         //计算出各个范围的session占比，并写入MySQL
-        calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
+        //calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
 
         //获取top10热门品类
         List<Tuple2<CategorySortKey, String>> top10CategoryList =
@@ -1061,7 +1055,34 @@ public class UserVisitSessionAnalyzeSpark {
         JavaPairRDD<CategorySortKey, String> sortedCategoryCountRDD =
                 sortKey2countRDD.sortByKey(false);
 
-        List<Tuple2<CategorySortKey, String>> top10CategoryList = null;
+        /**
+         * 第六步：用take(10)取出top10热门品类，并写入MySQL
+         */
+        ITop10CategoryDAO top10CategoryDAO = DAOFactory.getTop10CategoryDAO();
+
+        List<Tuple2<CategorySortKey, String>> top10CategoryList =
+                sortedCategoryCountRDD.take(10);
+        for(Tuple2<CategorySortKey, String> tuple : top10CategoryList) {
+            String countInfo = tuple._2;
+            long categoryid = Long.valueOf(StringUtils.getFieldFromConcatString(
+                    countInfo, "\\|", Constants.FIELD_CATEGORY_ID));
+            long clickCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                    countInfo, "\\|", Constants.FIELD_CLICK_COUNT));
+            long orderCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                    countInfo, "\\|", Constants.FIELD_ORDER_COUNT));
+            long payCount = Long.valueOf(StringUtils.getFieldFromConcatString(
+                    countInfo, "\\|", Constants.FIELD_PAY_COUNT));
+
+            //封装domain对象
+            Top10Category category = new Top10Category();
+            category.setTaskid(taskid);
+            category.setCategoryid(categoryid);
+            category.setClickCount(clickCount);
+            category.setOrderCount(orderCount);
+            category.setPayCount(payCount);
+
+            top10CategoryDAO.insert(category);
+        }
         return top10CategoryList;
     }
 

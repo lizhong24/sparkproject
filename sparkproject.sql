@@ -78,3 +78,13 @@ CREATE TABLE `session_detail` (
   KEY `idx_session_id` (`session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8
 
+# 创建top10_category表
+CREATE TABLE `top10_category` (
+  `task_id` int(11) DEFAULT NULL,
+  `category_id` int(11) DEFAULT NULL,
+  `click_count` int(11) DEFAULT NULL,
+  `order_count` int(11) DEFAULT NULL,
+  `pay_count` int(11) DEFAULT NULL,
+  KEY `idx_task_id` (`task_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8
+

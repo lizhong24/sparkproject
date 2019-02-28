@@ -1,13 +1,7 @@
 package com.wolf.sparkproject.dao.factory;
 
-import com.wolf.sparkproject.dao.ISessionAggrStatDAO;
-import com.wolf.sparkproject.dao.ISessionDetailDAO;
-import com.wolf.sparkproject.dao.ISessionRandomExtractDAO;
-import com.wolf.sparkproject.dao.ITaskDAO;
-import com.wolf.sparkproject.impl.SessionAggrStatDAOImpl;
-import com.wolf.sparkproject.impl.SessionDetailDAOImpl;
-import com.wolf.sparkproject.impl.SessionRandomExtractDAOImpl;
-import com.wolf.sparkproject.impl.TaskDAOImpl;
+import com.wolf.sparkproject.dao.*;
+import com.wolf.sparkproject.impl.*;
 
 /**
  * DAO工厂类
@@ -43,5 +37,13 @@ public class DAOFactory {
      */
     public static ISessionDetailDAO getSessionDetailDAO() {
         return new SessionDetailDAOImpl();
+    }
+
+    /**
+     * top10品类DAO
+     * @return ITop10CategoryDAO
+     */
+    public static ITop10CategoryDAO getTop10CategoryDAO() {
+        return new Top10CategoryDAOImpl();
     }
 }
