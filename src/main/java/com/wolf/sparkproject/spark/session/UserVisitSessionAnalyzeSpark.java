@@ -4,9 +4,11 @@ import com.alibaba.fastjson.JSONObject;
 import com.wolf.sparkproject.conf.ConfigurationManager;
 import com.wolf.sparkproject.constant.Constants;
 import com.wolf.sparkproject.dao.ISessionAggrStatDAO;
+import com.wolf.sparkproject.dao.ISessionRandomExtractDAO;
 import com.wolf.sparkproject.dao.ITaskDAO;
 import com.wolf.sparkproject.dao.factory.DAOFactory;
 import com.wolf.sparkproject.domain.SessionAggrStat;
+import com.wolf.sparkproject.domain.SessionRandomExtract;
 import com.wolf.sparkproject.domain.Task;
 import com.wolf.sparkproject.test.MockData;
 import com.wolf.sparkproject.util.*;
@@ -17,6 +19,7 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.Function;
+import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
@@ -102,7 +105,7 @@ public class UserVisitSessionAnalyzeSpark {
 
         System.out.println(filteredSessionid2AggrInfoRDD.count());
 
-        randomExtractSession(filteredSessionid2AggrInfoRDD);
+        randomExtractSession(task.getTaskid(),filteredSessionid2AggrInfoRDD);
 
         //计算出各个范围的session占比，并写入MySQL
         calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
@@ -551,6 +554,7 @@ public class UserVisitSessionAnalyzeSpark {
      * @param sessionid2AggrInfoRDD
      */
     private static void randomExtractSession(
+            final long taskid,
             JavaPairRDD<String, String> sessionid2AggrInfoRDD) {
         //第一步，计算每天每小时的session数量，获取<yyyy-mm-dd_hh,session>格式的RDD
         JavaPairRDD<String, String> time2sessionidRDD = sessionid2AggrInfoRDD.mapToPair(
@@ -597,7 +601,7 @@ public class UserVisitSessionAnalyzeSpark {
         int extractNumberPerDay = 100 / dateHourCountMap.size();
 
         //每一天每一个小时抽取session的索引，<date,<hour,(3,5,20,200)>>
-        Map<String, Map<String, List<Integer>>> dateHourExtractMap =
+        final Map<String, Map<String, List<Integer>>> dateHourExtractMap =
                 new HashMap<String, Map<String, List<Integer>>>();
         Random random = new Random();
 
@@ -649,9 +653,87 @@ public class UserVisitSessionAnalyzeSpark {
 
                     extractIndexList.add(extractIndex);
                 }
-
             }
         }
+
+        /**
+         * 第三步：遍历每天每小时的session，根据随机索引抽取
+         */
+
+        //执行groupByKey算子，得到<dateHour,(session aggrInfo)>
+        JavaPairRDD<String, Iterable<String>> time2sessionsRDD = time2sessionidRDD.groupByKey();
+
+        //我们用flatMap算子遍历所有的<dateHour,(session aggrInfo)>格式的数据
+        //然后会遍历每天每小时的session
+        //如果发现某个session恰巧在我们指定的这天这小时的随机抽取索引上
+        //那么抽取该session，直接写入MySQL的random_extract_session表
+        //将抽取出来的session id返回回来，形成一个新的JavaRDD<String>
+        //然后最后一步，用抽取出来的sessionid去join它们的访问行为明细数据写入session表
+        JavaPairRDD<String, String> extractSessionidsRDD = time2sessionsRDD.flatMapToPair(
+
+                new PairFlatMapFunction<Tuple2<String, Iterable<String>>, String, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Iterable<Tuple2<String, String>> call(
+                            Tuple2<String, Iterable<String>> tuple)
+                            throws Exception {
+                        List<Tuple2<String, String>> extractSessionids =
+                                new ArrayList<Tuple2<String, String>>();
+
+                        String dateHour = tuple._1;
+                        String date = dateHour.split("_")[0];
+                        String hour = dateHour.split("_")[1];
+                        Iterator<String> iterator = tuple._2.iterator();
+
+                        //拿到这一天这一小时的随机索引
+                        List<Integer> extractIndexList = dateHourExtractMap.get(date).get(hour);
+
+                        //先建domain和DAO
+                        //先在包com.wolf.sparkproject.domain中新建SessionRandomExtract.java
+                        //然后在包com.wolf.sparkproject.dao中新建ISessionRandomExtractDAO.java
+                        //接着在包com.wolf.sparkproject.impl中新建SessionRandomExtractDAOImpl.java
+                        //最后在DAOFactory.java中添加
+                        //public static ISessionRandomExtractDAO getSessionRandomExtractDAO() {
+                        //return new SessioRandomExtractDAOImpl();
+                        //}
+                        ISessionRandomExtractDAO sessionRandomExtractDAO =
+                                DAOFactory.getSessionRandomExtractDAO();
+
+                        int index = 0;
+                        while(iterator.hasNext()) {
+                            String sessionAggrInfo = iterator.next();
+
+                            if(extractIndexList.contains(index)) {
+                                String sessionid = StringUtils.getFieldFromConcatString(
+                                        sessionAggrInfo, "\\|", Constants.FIELD_SESSION_ID);
+
+                                //将数据写入MySQL
+                                SessionRandomExtract sessionRandomExtract = new SessionRandomExtract();
+
+                                //增加参数
+                                //private static void randomExtractSession(
+                                //final long taskid,
+                                //JavaPairRDD<String, String> sessionid2AggrInfoRDD)
+                                sessionRandomExtract.setTaskid(taskid);
+                                sessionRandomExtract.setSessionid(sessionid);
+                                sessionRandomExtract.setSessionid(StringUtils.getFieldFromConcatString(
+                                        sessionAggrInfo, "\\|", Constants.FIELD_SESSION_ID));
+                                sessionRandomExtract.setSearchKeywords(StringUtils.getFieldFromConcatString(
+                                        sessionAggrInfo, "\\|", Constants.FIELD_SEARCH_KEYWORDS));
+                                sessionRandomExtract.setClickCategoryIds(StringUtils.getFieldFromConcatString(
+                                        sessionAggrInfo, "\\|", Constants.FIELD_CLICK_CATEGORY_IDS));
+
+                                sessionRandomExtractDAO.insert(sessionRandomExtract);
+
+                                //将sessionid加入list
+                                extractSessionids.add(new Tuple2<String, String>(sessionid, sessionid));
+                            }
+                            index ++;
+                        }
+                        return extractSessionids;
+                    }
+                });
     }
 
     /**
