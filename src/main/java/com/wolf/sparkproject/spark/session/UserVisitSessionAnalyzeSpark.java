@@ -24,9 +24,7 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
 import scala.Tuple2;
 
-import java.util.Date;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 用户访问session分析spark作业
@@ -572,6 +570,88 @@ public class UserVisitSessionAnalyzeSpark {
 
         //得到每天每小时的session数量
         Map<String, Object> countMap = time2sessionidRDD.countByKey();
+
+        //第二步，使用按时间比例随机抽取算法，计算出每小时要抽取session的索引
+        //将<yyyy-mm-dd_hh,count>格式的map转换成<yyyy-mm-dd,<hh,count>>的格式，方便后面使用
+        Map<String, Map<String, Long>> dateHourCountMap =
+                new HashMap<String, Map<String, Long>>();
+        for(Map.Entry<String, Object>countEntry : countMap.entrySet()) {
+            String dateHour = countEntry.getKey();
+            String date = dateHour.split("_")[0];
+            String hour = dateHour.split("_")[1];
+
+            long count = Long.valueOf(String.valueOf(countEntry.getValue()));
+
+            Map<String, Long> hourCountMap = dateHourCountMap.get(date);
+            if(hourCountMap == null) {
+                hourCountMap = new HashMap<String, Long>();
+                dateHourCountMap.put(date, hourCountMap);
+            }
+
+            hourCountMap.put(hour, count);
+        }
+
+        //开始实现按照时间比例随机抽取算法
+
+        //总共抽取100个session，先按照天数平分
+        int extractNumberPerDay = 100 / dateHourCountMap.size();
+
+        //每一天每一个小时抽取session的索引，<date,<hour,(3,5,20,200)>>
+        Map<String, Map<String, List<Integer>>> dateHourExtractMap =
+                new HashMap<String, Map<String, List<Integer>>>();
+        Random random = new Random();
+
+        for(Map.Entry<String, Map<String, Long>> dateHourCountEntry : dateHourCountMap.entrySet()) {
+            String date = dateHourCountEntry.getKey();
+            Map<String, Long> hourCountMap = dateHourCountEntry.getValue();
+
+            //计算出这一天的session总数
+            long sessionCount = 0L;
+            for (long hourCount : hourCountMap.values()) {
+                sessionCount += hourCount;
+            }
+
+            Map<String, List<Integer>> hourExtractMap = dateHourExtractMap.get(date);
+            if (hourExtractMap == null) {
+                hourExtractMap = new HashMap<String, List<Integer>>();
+                dateHourExtractMap.put(date, hourExtractMap);
+            }
+
+            //遍历每个小时
+            for (Map.Entry<String, Long> hourCountEntry : hourCountMap.entrySet()) {
+                String hour = hourCountEntry.getKey();
+                long count = hourCountEntry.getValue();
+
+                //计算每个小时的session数量，占据当天总session数量的比例，直接乘以每天要抽取的数量
+                //就可以算出当前小时所需抽取的session数量
+                long hourExtractNumber = (int) (((double) count / (double) sessionCount)
+                        * extractNumberPerDay);
+
+                if (hourExtractNumber > count) {
+                    hourExtractNumber = (int) count;
+                }
+
+                //先获取当前小时的存放随机数list
+                List<Integer> extractIndexList = hourExtractMap.get(hour);
+                if (extractIndexList == null) {
+                    extractIndexList = new ArrayList<Integer>();
+                    hourExtractMap.put(hour, extractIndexList);
+                }
+
+                //生成上面计算出来的数量的随机数
+                for (int i = 0; i < hourExtractNumber; i++) {
+                    int extractIndex = random.nextInt((int) count);
+
+                    //生成不重复的索引
+                    while (extractIndexList.contains(extractIndex)) {
+                        extractIndex = random.nextInt((int) count);
+                    }
+
+                    extractIndexList.add(extractIndex);
+                }
+
+            }
+        }
     }
 
     /**
