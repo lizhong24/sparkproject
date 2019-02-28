@@ -26,6 +26,7 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
 import org.apache.spark.sql.hive.HiveContext;
 import scala.Tuple2;
+import com.google.common.base.Optional;
 
 import java.util.*;
 
@@ -1012,6 +1013,22 @@ public class UserVisitSessionAnalyzeSpark {
         JavaPairRDD<Long, Long> payCategoryId2CountRDD =
                 getPayCategoryId2CountRDD(sessionid2detailRDD);
 
+        /**
+         * 第三步：join各品类与它的点击、下单和支付的次数
+         *
+         * caetoryidRDD中包含了所有符合条件的session访问过的品类id
+         *
+         * 上面分别计算出来的三份各品类的点击、下单和支付的次数，可能不是包含所有品类的，
+         * 比如，有的品类就只是被点击过，但是没有人下单和支付
+         * 所以，这里就不能使用join操作，而是要使用leftOutJoin操作，
+         * 就是说，如果categoryidRDD不能join到自己的某个数据，比如点击、下单或支付数据，
+         * 那么该categoryidRDD还是要保留下来的
+         * 只不过，没有join到的那个数据就是0了
+         */
+        JavaPairRDD<Long, String> categoryid2countRDD = joinCategoryAndData(
+                categoryidRDD, clickCategoryId2CountRDD, orderCategoryId2CountRDD,
+                payCategoryId2CountRDD);
+
         List<Tuple2<CategorySortKey, String>> top10CategoryList = null;
         return top10CategoryList;
     }
@@ -1155,5 +1172,97 @@ public class UserVisitSessionAnalyzeSpark {
                     }
                 });
         return payCategoryId2CountRDD;
+    }
+
+    private static JavaPairRDD<Long, String> joinCategoryAndData(
+            JavaPairRDD<Long, Long> categoryidRDD,
+            JavaPairRDD<Long, Long> clickCategoryId2CountRDD,
+            JavaPairRDD<Long, Long> orderCategoryId2CountRDD,
+            JavaPairRDD<Long, Long> payCategoryId2CountRDD) {
+
+        //如果使用leftOuterJoin就有可能出现右边那个RDD中join过来时没有值
+        //所以Tuple2中的第二个值用Optional<Long>类型就代表可能有值也可能没有值
+        JavaPairRDD<Long, Tuple2<Long, Optional<Long>>> tmpJoinRDD =
+                categoryidRDD.leftOuterJoin(clickCategoryId2CountRDD);
+
+        JavaPairRDD<Long, String> tmpMapRDD = tmpJoinRDD.mapToPair(
+
+                new PairFunction<Tuple2<Long,Tuple2<Long,Optional<Long>>>, Long, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Tuple2<Long, String> call(
+                            Tuple2<Long, Tuple2<Long, Optional<Long>>> tuple)
+                            throws Exception {
+                        long categoryid = tuple._1;
+                        Optional<Long> optional = tuple._2._2;
+                        long clickCount = 0L;
+
+                        if(optional.isPresent()) {
+                            clickCount = optional.get();
+                        }
+
+                        String value = Constants.FIELD_CATEGORY_ID + "=" + categoryid + "|" +
+                                Constants.FIELD_CLICK_COUNT + "=" + clickCount;
+
+                        return new Tuple2<Long, String>(categoryid, value);
+                    }
+
+                });
+
+        tmpMapRDD = tmpMapRDD.leftOuterJoin(orderCategoryId2CountRDD).mapToPair(
+
+                new PairFunction<Tuple2<Long,Tuple2<String,Optional<Long>>>, Long, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Tuple2<Long, String> call(
+                            Tuple2<Long, Tuple2<String, Optional<Long>>> tuple)
+                            throws Exception {
+                        long categoryid = tuple._1;
+                        String value = tuple._2._1;
+
+                        Optional<Long> optional = tuple._2._2;
+                        long orderCount = 0L;
+
+                        if(optional.isPresent()) {
+                            orderCount = optional.get();
+                        }
+
+                        value = value + "|" + Constants.FIELD_ORDER_COUNT + "=" + orderCount;
+
+                        return new Tuple2<Long, String>(categoryid, value);
+                    }
+
+                });
+
+        tmpMapRDD = tmpMapRDD.leftOuterJoin(payCategoryId2CountRDD).mapToPair(
+
+                new PairFunction<Tuple2<Long,Tuple2<String,Optional<Long>>>, Long, String>() {
+
+                    private static final long serialVersionUID = 1L;
+
+
+                    public Tuple2<Long, String> call(
+                            Tuple2<Long, Tuple2<String, Optional<Long>>> tuple)
+                            throws Exception {
+                        long categoryid = tuple._1;
+                        String value = tuple._2._1;
+
+                        Optional<Long> optional = tuple._2._2;
+                        long payCount = 0L;
+
+                        if(optional.isPresent()) {
+                            payCount = optional.get();
+                        }
+
+                        value = value + "|" + Constants.FIELD_PAY_COUNT + "=" + payCount;
+
+                        return new Tuple2<Long, String>(categoryid, value);
+                    }
+
+                });
+
+        return tmpMapRDD;
     }
 }
