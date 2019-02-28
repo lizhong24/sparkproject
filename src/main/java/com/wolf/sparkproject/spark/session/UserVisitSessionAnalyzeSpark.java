@@ -26,6 +26,7 @@ import scala.Tuple2;
 
 import java.util.Date;
 import java.util.Iterator;
+import java.util.Map;
 
 /**
  * 用户访问session分析spark作业
@@ -102,6 +103,8 @@ public class UserVisitSessionAnalyzeSpark {
                 sessionid2AggrInfoRDD, taskParam, sessionAggrStatAccumulator);
 
         System.out.println(filteredSessionid2AggrInfoRDD.count());
+
+        randomExtractSession(filteredSessionid2AggrInfoRDD);
 
         //计算出各个范围的session占比，并写入MySQL
         calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
@@ -328,7 +331,8 @@ public class UserVisitSessionAnalyzeSpark {
                             + Constants.FIELD_SEARCH_KEYWORDS + "=" + searchKeywords + "|"
                             + Constants.FIELD_CLICK_CATEGORY_IDS + "=" + clickCategoryIds + "|"
                             + Constants.FIELD_VISIT_LENGTH + "=" + visitLength + "|"
-                            + Constants.FIELD_STEP_LENGTH + "=" + stepLength;
+                            + Constants.FIELD_STEP_LENGTH + "=" + stepLength + "|"
+                            + Constants.FIELD_START_TIME + "=" + DateUtils.formatDate(startTime);
 
                     return new Tuple2<Long, String>(userid, partAggrInfo);
                 }
@@ -542,6 +546,32 @@ public class UserVisitSessionAnalyzeSpark {
                 }
             });
         return filteredSessionid2AggrInfoRDD;
+    }
+
+    /**
+     * 随机抽取session
+     * @param sessionid2AggrInfoRDD
+     */
+    private static void randomExtractSession(
+            JavaPairRDD<String, String> sessionid2AggrInfoRDD) {
+        //第一步，计算每天每小时的session数量，获取<yyyy-mm-dd_hh,session>格式的RDD
+        JavaPairRDD<String, String> time2sessionidRDD = sessionid2AggrInfoRDD.mapToPair(
+                new PairFunction<Tuple2<String, String>, String, String>(){
+
+                    private static final long serialVersionUID = 1L;
+
+                    public Tuple2<String, String> call(
+                            Tuple2<String, String> tuple) throws Exception {
+                        String aggrInfo = tuple._2;
+                        String startTime = StringUtils.getFieldFromConcatString(
+                                aggrInfo, "\\|", Constants.FIELD_START_TIME);
+                        String dateHour = DateUtils.getDateHour(startTime);
+                        return new Tuple2<String, String>(dateHour, aggrInfo);
+                    }
+                });
+
+        //得到每天每小时的session数量
+        Map<String, Object> countMap = time2sessionidRDD.countByKey();
     }
 
     /**
