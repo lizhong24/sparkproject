@@ -112,6 +112,9 @@ public class UserVisitSessionAnalyzeSpark {
         List<Tuple2<CategorySortKey, String>> top10CategoryList =
                 getTop10Category(task.getTaskid(), sessionid2detailRDD);
 
+        //获取top10活跃session
+        getTop10Session(sc, task.getTaskid(), top10CategoryList, sessionid2detailRDD);
+
         //关闭spark上下文
         sc.close();
     }
@@ -1315,7 +1318,38 @@ public class UserVisitSessionAnalyzeSpark {
                     }
 
                 });
-
         return tmpMapRDD;
+    }
+
+    /**
+     * 获取top10活跃session
+     * @param sc
+     * @param taskid
+     * @param top10CategoryList
+     * @param sessionid2detailRDD
+     */
+    private static void getTop10Session(
+            JavaSparkContext sc,
+            final long taskid,
+            List<Tuple2<CategorySortKey, String>> top10CategoryList,
+            JavaPairRDD<String, Row> sessionid2detailRDD) {
+
+        /**
+         * 第一步：将top10热门品类的id生成一份RDD
+         */
+
+        //处理List
+        List<Tuple2<Long, Long>> top10CategoryIdList =
+                new ArrayList<Tuple2<Long, Long>>();
+
+        for (Tuple2<CategorySortKey, String> category : top10CategoryList) {
+            long categoryid = Long.valueOf(StringUtils.getFieldFromConcatString(
+                    category._2, "\\|", Constants.FIELD_CATEGORY_ID));
+            top10CategoryIdList.add(new Tuple2<Long, Long>(categoryid, categoryid));
+        }
+
+        JavaPairRDD<Long, Long> top10CategoryIdRDD =
+                sc.parallelizePairs(top10CategoryIdList);
+
     }
 }
