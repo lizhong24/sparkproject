@@ -57,9 +57,38 @@ public class UserVisitSessionAnalyzeSpark {
         //首先在Constants.java中设置spark作业相关的常量
         //String SPARK_APP_NAME = "UserVisitSessionAnalyzeSpark";
         //保存Constants.java配置
+
+        /**
+         * Kryo 序列化原因
+         在广播大变量进行优化后，还可以进一步优化，即优化这个序列化格式。
+         默认情况下，Spark内部是使用Java的序列化机制ObjectOutputStream / ObjectInputStream这种对象输入输出流机制来进行序列化。
+         这种默认序列化机制的好处在于：处理起来比较方便，也不需要我们手动去做什么事情，只是在算子里面使用的变量必须是实现Serializable接口的，可序列化即可。
+         但是缺点在于：默认的序列化机制的效率不高，序列化的速度比较慢；序列化以后的数据，占用的内存空间相对还是比较大。
+
+         可以手动进行序列化格式的优化，Spark支持使用Kryo序列化机制。Kryo序列化机制比默认的Java序列化机制速度要快，序列化后的数据要更小，大概是Java序列化机制的1/10。所以Kryo序列化优化以后，可以让网络传输的数据变少，在集群中耗费的内存资源大大减少。
+
+         Kryo序列化生效位置
+         Kryo序列化机制一旦启用以后，会在以下几个地方生效：
+         1. 算子函数中使用到的外部变量，会序列化，这时可以是用Kryo序列化机制；
+         2. 持久化 RDD 时进行序列化，比如StorageLevel.MEMORY_ONLY_SER，可以使用 Kryo 进一步优化序列化的效率和性能；
+         3、进行shuffle时，比如在进行stage间的task的shuffle操作时，节点与节点之间的task会互相大量通过网络拉取和传输文件，此时，这些数据既然通过网络传输，也是可能要序列化的，就会使用Kryo。
+
+         Kryo序列化优点
+         1. 算子函数中使用到的外部变量，使用Kryo以后：优化网络传输的性能，可以优化集群中内存的占用和消耗；
+         2. 持久化RDD，优化内存的占用和消耗，持久化RDD占用的内存越少，task执行的时候，创建的对象，就不至于频繁的占满内存，频繁发生GC；
+         3、shuffle：可以优化网络传输的性能。
+
+         实现Kryo序列化步骤
+         第一步，在 SparkConf中设置一个属性spark.serializer，使用org.apache.spark.serializer.KryoSerializer类。
+         Kryo 之所以没有被作为默认的序列化类库的原因，主要是因为 Kryo 要求，如果要达到它的最佳性能的话，那么就一定要注册你自定义的类（比如，你的算子函数中使用到了外部自定义类型的对象变量，这时就要求必须注册你的类，否则 Kryo 达不到最佳性能）。
+         第二步，注册你使用到的需要通过 Kryo 序列化的一些自定义类。
+         */
         SparkConf conf = new SparkConf()
                 .setAppName(Constants.SPARK_APP_NAME)
-                .setMaster("local");
+                .setMaster("local")
+                .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+                .registerKryoClasses(new Class[]{
+                        CategorySortKey.class});
 
         JavaSparkContext sc = new JavaSparkContext(conf);
         SQLContext sqlContext = getSQLContext(sc.sc());
@@ -667,6 +696,13 @@ public class UserVisitSessionAnalyzeSpark {
         Map<String, Map<String, List<Integer>>> dateHourExtractMap =
                 new HashMap<String, Map<String, List<Integer>>>();
 
+        /**
+         * 性能调优之广播大变量
+         *
+         * session 随机抽取功能使用到了随机抽取索引map这一比较大的变量，
+         * 之前是直接在算子里使用了这个map，每个task都会拷贝一份map副本，
+         * 比较消耗内存和网络传输性能，现在将其改为广播变量。
+         */
         final Broadcast<Map<String, Map<String, List<Integer>>>> dateHourExtractMapBroadcast =
                 sc.broadcast(dateHourExtractMap);
 
