@@ -15,6 +15,7 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.*;
+import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.DataFrame;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SQLContext;
@@ -124,7 +125,7 @@ public class UserVisitSessionAnalyzeSpark {
         //持久化 sessionid2detailRDD
         sessionid2detailRDD = sessionid2detailRDD.persist(StorageLevel.MEMORY_ONLY());
 
-        randomExtractSession(task.getTaskid(),filteredSessionid2AggrInfoRDD, sessionid2ActionRDD);
+        randomExtractSession(sc, task.getTaskid(), filteredSessionid2AggrInfoRDD, sessionid2ActionRDD);
 
         //计算出各个范围的session占比，并写入MySQL
         //calculateAndPersistAggrStat(sessionAggrStatAccumulator.value(), task.getTaskid());
@@ -600,9 +601,13 @@ public class UserVisitSessionAnalyzeSpark {
 
     /**
      * 随机抽取session
+     * @param sc
+     * @param taskid
      * @param sessionid2AggrInfoRDD
+     * @param sessionid2actionRDD
      */
     private static void randomExtractSession(
+            JavaSparkContext sc,
             final long taskid,
             JavaPairRDD<String, String> sessionid2AggrInfoRDD,
             JavaPairRDD<String, Row> sessionid2actionRDD) {
@@ -659,8 +664,12 @@ public class UserVisitSessionAnalyzeSpark {
         int extractNumberPerDay = 100 / dateHourCountMap.size();
 
         //每一天每一个小时抽取session的索引，<date,<hour,(3,5,20,200)>>
-        final Map<String, Map<String, List<Integer>>> dateHourExtractMap =
+        Map<String, Map<String, List<Integer>>> dateHourExtractMap =
                 new HashMap<String, Map<String, List<Integer>>>();
+
+        final Broadcast<Map<String, Map<String, List<Integer>>>> dateHourExtractMapBroadcast =
+                sc.broadcast(dateHourExtractMap);
+
         Random random = new Random();
 
         for(Map.Entry<String, Map<String, Long>> dateHourCountEntry : dateHourCountMap.entrySet()) {
@@ -743,6 +752,9 @@ public class UserVisitSessionAnalyzeSpark {
                         String date = dateHour.split("_")[0];
                         String hour = dateHour.split("_")[1];
                         Iterator<String> iterator = tuple._2.iterator();
+
+                        Map<String, Map<String, List<Integer>>> dateHourExtractMap =
+                                dateHourExtractMapBroadcast.value();
 
                         //拿到这一天这一小时的随机索引
                         List<Integer> extractIndexList = dateHourExtractMap.get(date).get(hour);
